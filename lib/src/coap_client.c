@@ -23,6 +23,24 @@
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * 
+ * 
+ * 
+ * Copyright (c) 2017 David Palma.
+ * All Rights Reserved.
+ * 
+ * This software is released free of charge as open source software with a GNU 
+ * General Public License.
+ * It is free software: you can redistribute it and/or modify it under the 
+ * terms of the GNU General Public License as published by the Free 
+ * Software Foundation, either version 3 of the License, or (at your option)
+ * any later version.
+ * 
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for 
+ * more details.
+ * 
  */
 
 /**
@@ -56,8 +74,8 @@
 #ifdef COAP_DTLS_EN
 
 #define COAP_CLIENT_DTLS_MTU              COAP_MSG_MAX_BUF_LEN                  /**< Maximum transmission unit excluding the UDP and IPv6 headers */
-#define COAP_CLIENT_DTLS_RETRANS_TIMEOUT  100                                   /**< Retransmission timeout (msec) for the DTLS handshake */
-#define COAP_CLIENT_DTLS_TOTAL_TIMEOUT    5000                                  /**< Total timeout (msec) for the DTLS handshake */
+#define COAP_CLIENT_DTLS_RETRANS_TIMEOUT  3000                                   /**< Retransmission timeout (msec) for the DTLS handshake */
+#define COAP_CLIENT_DTLS_TOTAL_TIMEOUT    50000                                  /**< Total timeout (msec) for the DTLS handshake */
 #define COAP_CLIENT_DTLS_PRIORITIES       "PERFORMANCE:-VERS-TLS-ALL:+VERS-DTLS1.0:%SERVER_PRECEDENCE"
                                                                                 /**< DTLS priorities */
 #endif
@@ -560,6 +578,29 @@ int coap_client_create(coap_client_t *client,
             {
                 continue;
             }
+            
+            /*
+             * Fixing source port to use LOWPAN_NHC
+             *
+             * For example use 61617 or 61618
+             *
+             * NOTE: covering only IPv6
+             */
+    
+            if(node->ai_family == AF_INET6){
+                struct sockaddr_in6 srcaddr;
+                struct in6_addr anyaddr = IN6ADDR_ANY_INIT;
+
+                memset(&srcaddr, 0, sizeof(srcaddr));
+                srcaddr.sin6_family = node->ai_family;
+                srcaddr.sin6_addr = anyaddr;
+                srcaddr.sin6_port = htons(61617);
+                if (bind(client->sd, (struct sockaddr *) &srcaddr, sizeof(srcaddr)) < 0) {
+                    perror("porra... bind");
+                    exit(1);
+                }
+            }
+
             ret = connect(client->sd, node->ai_addr, node->ai_addrlen);
             if (ret < 0)
             {
@@ -871,7 +912,9 @@ static ssize_t coap_client_recv(coap_client_t *client, coap_msg_t *msg)
 
 #ifdef COAP_DTLS_EN
     errno = 0;
-    num = gnutls_record_recv(client->session, buf, sizeof(buf));
+    do {
+        num = gnutls_record_recv(client->session, buf, sizeof(buf));
+    } while (num == GNUTLS_E_INTERRUPTED);
     if (errno != 0)
     {
         return -errno;
@@ -1404,6 +1447,9 @@ static int coap_client_exchange_con(coap_client_t *client, coap_msg_t *req, coap
             return ret;
         }
         num = coap_client_recv(client, resp);
+        if (num == -EAGAIN) {
+            continue;
+        }
         if (num < 0)
         {
             return num;

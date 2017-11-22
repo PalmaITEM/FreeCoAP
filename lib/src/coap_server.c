@@ -23,6 +23,24 @@
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * 
+ * 
+ * 
+ * Copyright (c) 2017 David Palma.
+ * All Rights Reserved.
+ * 
+ * This software is released free of charge as open source software with a GNU 
+ * General Public License.
+ * It is free software: you can redistribute it and/or modify it under the 
+ * terms of the GNU General Public License as published by the Free 
+ * Software Foundation, either version 3 of the License, or (at your option)
+ * any later version.
+ * 
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for 
+ * more details.
+ * 
  */
 
 /**
@@ -51,14 +69,14 @@
 #include "coap_server.h"
 #include "coap_log.h"
 
-#define COAP_SERVER_ACK_TIMEOUT_SEC       2                                     /**< Minimum delay to wait before retransmitting a confirmable message */
+#define COAP_SERVER_ACK_TIMEOUT_SEC       20                                     /**< Minimum delay to wait before retransmitting a confirmable message */
 #define COAP_SERVER_MAX_RETRANSMIT        4                                     /**< Maximum number of times a confirmable message can be retransmitted */
 
 #ifdef COAP_DTLS_EN
 
 #define COAP_SERVER_DTLS_MTU              COAP_MSG_MAX_BUF_LEN                  /**< Maximum transmission unit excluding the UDP and IPv6 headers */
-#define COAP_SERVER_DTLS_RETRANS_TIMEOUT  100                                   /**< Retransmission timeout (msec) for the DTLS handshake */
-#define COAP_SERVER_DTLS_TOTAL_TIMEOUT    5000                                  /**< Total timeout (msec) for the DTLS handshake */
+#define COAP_SERVER_DTLS_RETRANS_TIMEOUT  3000                                   /**< Retransmission timeout (msec) for the DTLS handshake */
+#define COAP_SERVER_DTLS_TOTAL_TIMEOUT    50000                                  /**< Total timeout (msec) for the DTLS handshake */
 #define COAP_SERVER_DTLS_NUM_DH_BITS      1024                                  /**< DTLS Diffie-Hellman key size */
 #define COAP_SERVER_DTLS_PRIORITIES       "PERFORMANCE:-VERS-TLS-ALL:+VERS-DTLS1.0:%SERVER_PRECEDENCE"
                                                                                 /**< DTLS priorities */
@@ -573,9 +591,13 @@ static int coap_server_trans_dtls_create(coap_server_trans_t *trans)
     ret = coap_server_trans_dtls_handshake(trans);
     if (ret < 0)
     {
-        coap_log_warn("Failed to complete DTLS handshake");
         gnutls_deinit(trans->session);
-        return ret;
+        coap_log_warn("Failed to complete DTLS handshake");
+        /*
+         * return -1 to indicate DTLS error and avoid server stopping completely
+         */
+        return -1;
+
     }
 #ifdef COAP_CLIENT_AUTH
     ret = coap_server_trans_dtls_verify_peer_cert(trans);
@@ -982,7 +1004,9 @@ static ssize_t coap_server_trans_recv(coap_server_trans_t *trans, coap_msg_t *ms
 
 #ifdef COAP_DTLS_EN
     errno = 0;
-    num = gnutls_record_recv(trans->session, buf, sizeof(buf));
+    do {
+        num = gnutls_record_recv(trans->session, buf, sizeof(buf));
+    } while(num == GNUTLS_E_INTERRUPTED);
     if (errno != 0)
     {
         return -errno;
@@ -1863,6 +1887,10 @@ static int coap_server_exchange(coap_server_t *server)
     /* receive message */
     coap_msg_create(&recv_msg);
     num = coap_server_trans_recv(trans, &recv_msg);
+    if (num == -EAGAIN) {
+        coap_msg_destroy(&recv_msg);
+        return 0;
+    }
     if (num < 0)
     {
         coap_msg_destroy(&recv_msg);
@@ -1877,9 +1905,17 @@ static int coap_server_exchange(coap_server_t *server)
         {
             /* message deduplication */
             /* acknowledge the (confirmable) request again */
-            /* do not send the response again */
+            /* do not send the response again if it was not piggybacked */
             coap_log_info("Received duplicate confirmable request from address %s and port %u", trans->client_addr, ntohs(trans->client_sin.COAP_IPV_SIN_PORT));
-            ret = coap_server_trans_send_ack(trans, &recv_msg);
+
+            resp_type = coap_server_get_resp_type(server, &recv_msg);
+            if (resp_type == COAP_SERVER_SEPARATE) {
+                /* do not send the response again */
+                ret = coap_server_trans_send_ack(trans, &recv_msg);
+            } else {
+                coap_log_warn("Re-sending response fix for blockwise operations");
+                ret = coap_server_trans_send(trans, &trans->resp);
+            }
             coap_msg_destroy(&recv_msg);
             if (ret < 0)
             {
@@ -2114,7 +2150,7 @@ int coap_server_run(coap_server_t *server)
             return ret;
         }
         ret = coap_server_exchange(server);
-        if (ret < 0)
+        if (ret < 0 && ret != -EAGAIN)
         {
             if ((ret == -ETIMEDOUT) || (ret == -ECONNRESET))
             {

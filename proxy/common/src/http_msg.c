@@ -23,6 +23,24 @@
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * 
+ * 
+ * 
+ * Copyright (c) 2017 David Palma.
+ * All Rights Reserved.
+ * 
+ * This software is released free of charge as open source software with a GNU 
+ * General Public License.
+ * It is free software: you can redistribute it and/or modify it under the 
+ * terms of the GNU General Public License as published by the Free 
+ * Software Foundation, either version 3 of the License, or (at your option)
+ * any later version.
+ * 
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for 
+ * more details.
+ * 
  */
 
 /**
@@ -272,6 +290,14 @@ static ssize_t http_msg_parse_start(http_msg_t *msg, char *str)
 
     for (i = 0; i < HTTP_MSG_NUM_START; i++)
     {
+	/* 
+	 * Removing unnecessary '/' when using cURL
+	 */
+	if(*next == '/')
+	{
+	    next++;
+	}
+
         start = next;
         if (i < HTTP_MSG_NUM_START - 1)
         {
@@ -347,6 +373,15 @@ static ssize_t http_msg_parse_headers(http_msg_t *msg, char *str)
             return -EBADMSG;
         }
         *value++ = '\0';
+
+	/*
+	 * Skip header with name Accept
+         */
+	if(strcmp("Accept", name) == 0)
+	{
+	    continue;
+	}
+
         ret = http_msg_list_add(&msg->header, http_msg_trim_ws(name), http_msg_trim_ws(value));
         if (ret < 0)
         {

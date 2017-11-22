@@ -23,6 +23,24 @@
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * 
+ * 
+ * 
+ * Copyright (c) 2017 David Palma.
+ * All Rights Reserved.
+ * 
+ * This software is released free of charge as open source software with a GNU 
+ * General Public License.
+ * It is free software: you can redistribute it and/or modify it under the 
+ * terms of the GNU General Public License as published by the Free 
+ * Software Foundation, either version 3 of the License, or (at your option)
+ * any later version.
+ * 
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for 
+ * more details.
+ * 
  */
 
 /**
@@ -36,7 +54,9 @@
 #include <signal.h>
 #include <getopt.h>
 #include <unistd.h>
+#ifdef COAP_DTLS_EN
 #include <gnutls/gnutls.h>
+#endif
 #include "listener.h"
 #include "connection.h"
 #include "param.h"
@@ -68,7 +88,6 @@ static void usage(void)
     printf("usage: proxy [options]\n");
     printf("options:\n");
     printf("    -h help\n");
-    printf("    -v verbose\n");
     printf("    -c config-file\n");
 }
 
@@ -94,7 +113,9 @@ int main(int argc, char **argv)
     struct sigaction sai = {{0}};
     const char *config_file_name = CONFIG_FILE_NAME;
     const char *short_opts = ":hc:";
+#ifdef COAP_DTLS_EN
     const char *gnutls_ver = NULL;
+#endif
     tls_server_t server = {0};
     listener_t *listener = NULL;
     unsigned listener_index = 0;
@@ -160,8 +181,6 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    coap_log_set_level(DEF_MAX_LOG_LEVEL);
-
     /*
      * from here on error messages are written to the log file
      */
@@ -174,6 +193,7 @@ int main(int argc, char **argv)
 
     coap_log_set_level(param_get_max_log_level(&param));
 
+#ifdef COAP_DTLS_EN
     gnutls_ver = gnutls_check_version(NULL);
     if (gnutls_ver == NULL)
     {
@@ -182,6 +202,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
     coap_log_info("GnuTLS version: %s", gnutls_ver);
+#endif
 
     /* initialise SSL/TLS */
     ret = tls_init();

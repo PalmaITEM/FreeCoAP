@@ -42,6 +42,8 @@
 #define COAP_IPV_SIN_ADDR    sin6_addr
 #define COAP_IPV_SIN_PORT    sin6_port
 
+#define COAP_IPV_INADDR_ANY  in6addr_any
+
 typedef struct sockaddr_in6  coap_ipv_sockaddr_in_t;
 
 #else  /* COAP_IP4 */
@@ -49,6 +51,8 @@ typedef struct sockaddr_in6  coap_ipv_sockaddr_in_t;
 #define COAP_IPV_AF_INET     AF_INET
 #define COAP_IPV_SIN_ADDR    sin_addr
 #define COAP_IPV_SIN_PORT    sin_port
+
+#define COAP_IPV_INADDR_ANY  INADDR_ANY
 
 typedef struct sockaddr_in   coap_ipv_sockaddr_in_t;
 

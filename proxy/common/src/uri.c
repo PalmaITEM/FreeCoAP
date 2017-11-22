@@ -23,6 +23,24 @@
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * 
+ * 
+ * 
+ * Copyright (c) 2017 David Palma.
+ * All Rights Reserved.
+ * 
+ * This software is released free of charge as open source software with a GNU 
+ * General Public License.
+ * It is free software: you can redistribute it and/or modify it under the 
+ * terms of the GNU General Public License as published by the Free 
+ * Software Foundation, either version 3 of the License, or (at your option)
+ * any later version.
+ * 
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for 
+ * more details.
+ * 
  */
 
 /**
@@ -31,6 +49,7 @@
  *  @brief Source file for the FreeCoAP URI library
  */
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -344,6 +363,8 @@ void uri_destroy(uri_t *uri)
         free(uri->query);
     if (uri->fragment != NULL)
         free(uri->fragment);
+    if (uri->scope != NULL)
+        free(uri->scope);
     memset(uri, 0, sizeof(uri_t));
 }
 
@@ -412,6 +433,7 @@ static int uri_parse_hier_part(uri_t *uri, char **q)
     char *path = NULL;
     char *p = NULL;
     char *r = NULL;
+    char *scope = NULL;
 
     if ((uri->userinfo != NULL)
      || (uri->host != NULL)
@@ -482,6 +504,13 @@ static int uri_parse_hier_part(uri_t *uri, char **q)
         }
         if (len > 1)
         {
+            scope = strchr(p, '%');
+            if(scope != NULL) {
+                len = scope - p + 1;
+                *scope = '\0';
+                scope++;
+            }
+
             uri->host = calloc(len, 1);
             if (uri->host == NULL)
             {
@@ -493,6 +522,18 @@ static int uri_parse_hier_part(uri_t *uri, char **q)
             {
                 uri_destroy(uri);
                 return -EBADMSG;
+            }
+            
+            if(scope != NULL) {
+                len = strlen(scope) + 1;
+                uri->scope = calloc(len, 1);
+                memcpy(uri->scope, scope, len);
+            }
+
+            if (uri->host == NULL)
+            {
+                uri_destroy(uri);
+                return -ENOMEM;
             }
         }
 

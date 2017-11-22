@@ -23,6 +23,24 @@
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * 
+ * 
+ * 
+ * Copyright (c) 2017 David Palma.
+ * All Rights Reserved.
+ * 
+ * This software is released free of charge as open source software with a GNU 
+ * General Public License.
+ * It is free software: you can redistribute it and/or modify it under the 
+ * terms of the GNU General Public License as published by the Free 
+ * Software Foundation, either version 3 of the License, or (at your option)
+ * any later version.
+ * 
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for 
+ * more details.
+ * 
  */
 
 /**
@@ -39,6 +57,7 @@
 #include "tls_sock.h"
 #include "data_buf.h"
 #include "param.h"
+#include <stdbool.h>
 
 typedef struct
 {
@@ -61,5 +80,9 @@ int connection_init(void);
 void *connection_thread_func(void *data);
 connection_t *connection_new(tls_sock_t *sock, unsigned listener_index, unsigned con_index, param_t *param);
 void connection_delete(connection_t *con);
+
+bool proxy_handle_blockwise_op(coap_msg_t *resp, coap_msg_t *req, unsigned *block_num, unsigned *block_size);
+int proxy_parse_block_op(unsigned *num, unsigned *more, unsigned *size, coap_msg_t *msg, int type);
+int proxy_add_or_replace_block_op_val(coap_msg_t *msg, unsigned op_block_len, char* block_val, int type);
 
 #endif

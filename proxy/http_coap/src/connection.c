@@ -23,6 +23,24 @@
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * 
+ * 
+ * 
+ * Copyright (c) 2017 David Palma.
+ * All Rights Reserved.
+ * 
+ * This software is released free of charge as open source software with a GNU 
+ * General Public License.
+ * It is free software: you can redistribute it and/or modify it under the 
+ * terms of the GNU General Public License as published by the Free 
+ * Software Foundation, either version 3 of the License, or (at your option)
+ * any later version.
+ * 
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for 
+ * more details.
+ * 
  */
 
 /**
@@ -44,12 +62,16 @@
 #include "thread.h"
 #include "lock.h"
 #include "coap_log.h"
+#include <stdbool.h>
 
 #define CONNECTION_MSG_BODY_BUF_SIZE   1024
 #define CONNECTION_DATA_BUF_SIZE       4096
-#define CONNECTION_DATA_BUF_MAX_SIZE   (8 * CONNECTION_DATA_BUF_SIZE)
+#define CONNECTION_DATA_BUF_MAX_SIZE   (1024 * CONNECTION_DATA_BUF_SIZE)
 #define CONNECTION_DATA_BUF_MIN_SPACE  128
 #define CONNECTION_INT_BUF_LEN         16
+
+#define BLOCK_SIZE  32  /* Size of an individual block in a blockwise transfer
+                           MUST BE A POWER OF 2 */
 
 typedef enum
 {
@@ -125,25 +147,51 @@ int connection_init(void)
  */
 static int connection_coap_client_create(connection_t *con, uri_t *uri)
 {
-    int ret = 0;
+    int ret = 0, len = 0, host_len = 0, scope_len = 0;
+    char *host_and_scope = NULL, *uri_host = NULL, *uri_scope = NULL;
+
+    uri_host = uri_get_host(uri);
+    uri_scope = uri_get_scope(uri);
+    if (uri_scope != NULL) {
+        host_len = strlen(uri_host);
+        scope_len = strlen(uri_scope);
+        len = host_len + scope_len + 2; //'%' and '\0'
+        host_and_scope = calloc(len, 1);
+        if (host_and_scope == NULL){
+            perror("Error alloc host and scope");
+            return -ENOMEM;
+        }
+        memcpy(host_and_scope, uri_host, host_len);
+        *(host_and_scope + host_len) = '%';
+        memcpy((host_and_scope + host_len + 1), uri_scope, scope_len);
+        *(host_and_scope + len - 1) = '\0';
+    } else {
+        host_and_scope = uri_host;
+    }
 
     coap_log_info("[%u] <%u> %s Connecting to CoAP server host %s and port %s",
                   con->listener_index, con->con_index, con->addr,
                   uri_get_host(uri), uri_get_port(uri));
 
+#ifdef COAP_DTLS_EN
     ret = coap_client_create(&con->coap_client,
-                            uri_get_host(uri),
+                            host_and_scope,
                             uri_get_port(uri),
                             param_get_coap_client_key_file_name(con->param),
                             param_get_coap_client_cert_file_name(con->param),
                             param_get_coap_client_trust_file_name(con->param),
                             NULL,
                             NULL);
+#else
+    ret = coap_client_create(&con->coap_client,
+                            host_and_scope,
+                            uri_get_port(uri));
+#endif
     if (ret < 0)
     {
         coap_log_error("[%u] <%u> %s Failed to connect to CoAP server host %s and port %s: %s",
                        con->listener_index, con->con_index, con->addr,
-                       uri_get_host(uri), uri_get_port(uri),
+                       host_and_scope, uri_get_port(uri),
                        strerror(-ret));
         return ret;
     }
@@ -213,14 +261,17 @@ static int connection_recv(connection_t *con, http_msg_t *msg)
         else if (ret == -1)
         {
             coap_log_error("[%u] <%u> %s Call to select returned: -1, errno: %d (%s)",
-                           con->listener_index, con->con_index, con->addr, errno, strerror(errno));
+                           con->listener_index, con->con_index, con->addr, errno,
+                           strerror(errno));
             return -errno;
         }
-        num = tls_sock_read(con->sock, data_buf_get_next(&con->recv_buf), data_buf_get_space(&con->recv_buf));
+        num = tls_sock_read(con->sock, data_buf_get_next(&con->recv_buf),
+                                        data_buf_get_space(&con->recv_buf));
         if (num < 0)
         {
             coap_log_error("[%u] <%u> %s Failed to read from socket connected to HTTP client: %s",
-                           con->listener_index, con->con_index, con->addr, sock_strerror(num));
+                           con->listener_index, con->con_index, con->addr,
+                           sock_strerror(num));
             return -1;
         }
         if (num == 0)
@@ -230,7 +281,8 @@ static int connection_recv(connection_t *con, http_msg_t *msg)
             return CON_RET_CLOSED;
         }
         data_buf_add(&con->recv_buf, num);
-        num = http_msg_parse(msg, data_buf_get_data(&con->recv_buf), data_buf_get_count(&con->recv_buf));
+        num = http_msg_parse(msg, data_buf_get_data(&con->recv_buf),
+                                    data_buf_get_count(&con->recv_buf));
         if (num > 0)
         {
             data_buf_consume(&con->recv_buf, num);
@@ -267,7 +319,8 @@ static int connection_recv(connection_t *con, http_msg_t *msg)
         else
         {
             coap_log_error("[%u] <%u> %s Failed to parse request message from HTTP client: %s",
-                           con->listener_index, con->con_index, con->addr, http_msg_strerror(ret));
+                           con->listener_index, con->con_index, con->addr, 
+                           http_msg_strerror(ret));
             return num;
         }
     }
@@ -286,7 +339,8 @@ static int connection_send(connection_t *con, http_msg_t *msg)
 
     while (1)
     {
-        len = http_msg_generate(msg, data_buf_get_data(&con->send_buf), data_buf_get_space(&con->send_buf));
+        len = http_msg_generate(msg, data_buf_get_data(&con->send_buf), 
+                                        data_buf_get_space(&con->send_buf));
         if (len <= data_buf_get_space(&con->send_buf))
         {
             break;
@@ -343,7 +397,8 @@ static int connection_gen_error_resp(connection_t *con, http_msg_t *msg, unsigne
     if (ret < 0)
     {
         coap_log_error("[%u] <%u> %s Failed to set start line in response message to HTTP client: %s",
-                       con->listener_index, con->con_index, con->addr, http_msg_strerror(ret));
+                       con->listener_index, con->con_index, con->addr, 
+                       http_msg_strerror(ret));
         return ret;
     }
     return 0;
@@ -357,8 +412,19 @@ static int connection_process_full(connection_t *con, http_msg_t *req_msg, http_
     coap_msg_t coap_resp_msg = {0};
     coap_msg_t coap_req_msg = {0};
     unsigned code = 0;
+    bool has_more = false;
     uri_t uri = {0};
     int ret = 0;
+
+    char *full_payload = NULL;
+    unsigned payload_len;
+
+    unsigned block_size = 0;
+    unsigned block_num = 0;
+    unsigned start = 0;
+    unsigned len = 0;
+    int block_len;
+    char *block_val;
 
     coap_msg_create(&coap_req_msg);
     ret = cross_req_http_to_coap(&coap_req_msg, req_msg, &code);
@@ -411,40 +477,138 @@ static int connection_process_full(connection_t *con, http_msg_t *req_msg, http_
                        con->coap_client_host, con->coap_client_port);
     }
     uri_destroy(&uri);
-    coap_msg_create(&coap_resp_msg);
-    ret = coap_client_exchange(&con->coap_client, &coap_req_msg, &coap_resp_msg);
-    coap_msg_destroy(&coap_req_msg);
+
+    /*
+     * Set request as CONFIRMABLE
+     */
+    ret = coap_msg_set_type(&coap_req_msg, COAP_MSG_CON);
     if (ret < 0)
     {
-        coap_log_error("[%u] <%u> %s CoAP client exchange failed: %s",
-                       con->listener_index, con->con_index, con->addr, strerror(-ret));
-        switch (ret)
-        {
-        case -ETIMEDOUT:
-            /* If the proxy services the request by interacting with a third party
-             * (such as the CoAP origin server) and is unable to obtain a result within
-             * a reasonable time frame, a 504 (Gateway Timeout) response is returned.
-             */
-            ret = connection_gen_error_resp(con, resp_msg, 504);
-            break;
-        case -EBADMSG:
-            /* If a result can be obtained but is not understood, a 502 (Bad Gateway)
-             * response is returned.
-             */
-            ret = connection_gen_error_resp(con, resp_msg, 502);
-            break;
-        default:
-            /* If the proxy is unable or unwilling to service a request with a CoAP URI,
-             * a 501 (Not Implemented) response is returned to the client.
-             */
-            ret = connection_gen_error_resp(con, resp_msg, 501);
-            break;
-        }
-        coap_msg_destroy(&coap_resp_msg);
-        return ret;
+            uri_destroy(&uri);
+            coap_msg_destroy(&coap_req_msg);
+            return ret;
     }
+
+    /* 
+     * Read for handling multiple blocks
+     */
+    do
+    {
+        coap_msg_create(&coap_resp_msg);
+    
+        ret = coap_client_exchange(&con->coap_client, &coap_req_msg, &coap_resp_msg);
+        if (ret < 0)
+        {
+            coap_log_error("[%u] <%u> %s CoAP client exchange failed: %s",
+                           con->listener_index, con->con_index, con->addr, strerror(-ret));
+            switch (ret)
+            {
+            case -ETIMEDOUT:
+                /* If the proxy services the request by interacting with a third party
+                 * (such as the CoAP origin server) and is unable to obtain a result within
+                 * a reasonable time frame, a 504 (Gateway Timeout) response is returned.
+                 */
+                ret = connection_gen_error_resp(con, resp_msg, 504);
+                break;
+            case -EBADMSG:
+                /* If a result can be obtained but is not understood, a 502 (Bad Gateway)
+                 * response is returned.
+                 */
+                ret = connection_gen_error_resp(con, resp_msg, 502);
+                break;
+            default:
+                /* If the proxy is unable or unwilling to service a request with a CoAP URI,
+                 * a 501 (Not Implemented) response is returned to the client.
+                 */
+                ret = connection_gen_error_resp(con, resp_msg, 501);
+                break;
+            }
+            coap_msg_destroy(&coap_req_msg);
+            coap_msg_destroy(&coap_resp_msg);
+            return ret;
+        }
+
+        /* Check if there are more blocks for this response message */
+        has_more = proxy_handle_blockwise_op(&coap_resp_msg, &coap_req_msg, &block_num, &block_size);
+
+        /* save payload to full payload (regardless of having more blocks or not) */
+        start = block_num * block_size;
+ 
+        len = coap_msg_get_payload_len(&coap_resp_msg);
+        full_payload = realloc(full_payload, payload_len + len);
+        if (full_payload == NULL)
+        {
+            coap_log_error("Not enough memory for full payload buffer)");
+            ret = connection_gen_error_resp(con, resp_msg, 502);
+            coap_msg_destroy(&coap_req_msg);
+            coap_msg_destroy(&coap_resp_msg);
+            return ret;
+        }
+        payload_len += len;
+
+        memcpy(full_payload + start, coap_msg_get_payload(&coap_resp_msg), len);
+        start += len;
+
+
+        /* leave the while loop if there's nothing else */
+        if (!has_more)
+            break;
+
+        /* Update req message and get succeeding blocks */
+        
+        /*
+         * Determine the size of block val. Max is 3 bytes
+         * we add 1 to block_num so account for that
+         */
+        if(block_num < 15)
+            block_len = 1;
+        else if (block_num < 4095) 
+            block_len = 2;
+        else
+            block_len=3;
+        block_val = (char *) malloc(block_len);
+
+        ret = coap_msg_op_format_block_val(block_val, block_len, block_num+1, 0, block_size); //next block, and block_more to 0
+        if (ret < 0)
+        {
+            coap_log_error("Failed to format Block2 option value");
+            coap_msg_destroy(&coap_resp_msg);
+            coap_msg_destroy(&coap_req_msg);
+            /* free full_payload buffer */
+            free(full_payload);
+            return connection_gen_error_resp(con, resp_msg, code);
+        }
+        /*
+         * Check if COAP_MSG_BLOCK2 already exists in the previous request and replace if so, or add one if not
+         * return of the format corresponds to the length of the block val
+         */
+        ret = proxy_add_or_replace_block_op_val(&coap_req_msg, ret, block_val, COAP_MSG_BLOCK2);
+        /* free val because it has already been copied */
+        free(block_val);
+        if (ret < 0)
+        {
+            coap_log_error("Failed to add/replace Block2 option to request message");
+            coap_msg_destroy(&coap_resp_msg);
+            coap_msg_destroy(&coap_req_msg);
+            /* free full_payload buffer */
+            free(full_payload);
+            return connection_gen_error_resp(con, resp_msg, code);
+        }
+
+        /* New response will be created, free this one */
+        coap_msg_destroy(&coap_resp_msg);
+
+    } while (has_more);
+
+    //Update the response message with the entire received payload (in the case of blockwise operations)
+    coap_msg_set_payload(&coap_resp_msg, full_payload, (start + len));
+    //free full_payload buffer
+    free(full_payload);
+
     ret = cross_resp_coap_to_http(resp_msg, &coap_resp_msg, &code);
+
     coap_msg_destroy(&coap_resp_msg);
+    coap_msg_destroy(&coap_req_msg);
     if (ret < 0)
     {
         coap_log_error("[%u] <%u> %s Failed to convert CoAP message to HTTP message: %s",
@@ -453,6 +617,144 @@ static int connection_process_full(connection_t *con, http_msg_t *req_msg, http_
     }
     return 0;
 }
+
+/*
+ * @brief Handle/check blockwise operations in the proxy
+ *
+ * @param[in] coap response message to be checked
+ * @param[out] updated coap request message to get the next block
+ * 
+ * @returns Indicates wether a blockwise operation exists or not
+ * @retval false Block option not found
+ * @retval true Block option found
+ */
+bool proxy_handle_blockwise_op(coap_msg_t *resp, coap_msg_t *req, unsigned *block_num, unsigned *block_size)
+{
+    unsigned code_detail = 0;
+    unsigned code_class = 0;
+    unsigned block_more = 0;
+    int ret = 0;
+
+    /* determine method */
+    code_class = coap_msg_get_code_class(resp);
+    code_detail = coap_msg_get_code_detail(resp);
+
+    //Reset block_num and block_size
+    *block_num = 0;
+    *block_size = 0;
+
+    if (code_class == COAP_MSG_SUCCESS && code_detail == COAP_MSG_CONTENT)
+    {
+        ret = proxy_parse_block_op(block_num, &block_more, block_size, resp, COAP_MSG_BLOCK2);
+        if (ret < 0)
+        {
+            coap_log_warn("Unable to parse Block2 option value in received message");
+            return false;
+        }
+        if (ret == 1)
+        {
+            /* no Block2 option in the message */
+            return false;
+        }
+       
+        coap_log_debug("Block num: %u, Has more: %u, Block size: %u, Payload len: %d", *block_num, block_more, *block_size, coap_msg_get_payload_len(resp));
+        //If we get here there's something
+        if (block_more)
+            return true;
+        else
+            return false;
+    }
+
+    //Only handing GET messages for now
+    coap_log_debug("Blockwise support only for response (MSG_CONTENT) messages (code: %d)", code_detail);
+    return false;
+}
+
+
+/**
+ *  @brief Find and replace the value of Block2 option
+ *         or, if not found, add the Block2 option
+ *
+ *  @param[in] msg Pointer to a CoAP message
+ *  @param[in] op_block_len Length of the Block Value (in bytes)
+ *  @param[in] block_val The formatted Block Value
+ *  @param[in] type Block option type: COAP_MSG_BLOCK1 or COAP_MSG_BLOCK2
+ *
+ *  @returns Operation status
+ *  @retval 0 Success
+ *  @retval <0 Error
+ */
+int proxy_add_or_replace_block_op_val(coap_msg_t *msg, unsigned op_block_len, char* block_val, int type)
+{
+    coap_msg_op_t *op = NULL;
+    unsigned op_num = 0;
+
+    op = coap_msg_get_first_op(msg);
+    while (op != NULL)
+    {
+        op_num = coap_msg_op_get_num(op);
+        if (((op_num == COAP_MSG_BLOCK1) && (type == COAP_MSG_BLOCK1))
+         || ((op_num == COAP_MSG_BLOCK2) && (type == COAP_MSG_BLOCK2)))
+        {
+            //Replace
+            op->len = op_block_len;
+            op->val = (char *)malloc(op_block_len);
+            if (op->val == NULL)
+            {
+                return -1;
+            }
+            memcpy(op->val, block_val, op_block_len);
+            
+            return 0;
+        }
+        op = coap_msg_op_get_next(op);
+    }
+    //Not found, add
+    return coap_msg_add_op(msg, type, op_block_len, block_val);
+}
+
+
+
+
+/**
+ *  @brief Find and parse a Block1 or Block2 option
+ *
+ *  @note Copied from the Server Example
+ *
+ *  @param[out] num Pointer to Block number
+ *  @param[out] more Pointer to More value
+ *  @param[out] size Pointre to Block size (in bytes)
+ *  @param[in] msg Pointer to a CoAP message
+ *  @param[in] type Block option type: COAP_MSG_BLOCK1 or COAP_MSG_BLOCK2
+ *
+ *  @returns Operation status
+ *  @retval 1 Block option not found
+ *  @retval 0 Success
+ *  @retval <0 Error
+ */
+int proxy_parse_block_op(unsigned *num, unsigned *more, unsigned *size, coap_msg_t *msg, int type)
+{
+    coap_msg_op_t *op = NULL;
+    unsigned op_num = 0;
+    unsigned op_len = 0;
+    char *op_val = NULL;
+
+    op = coap_msg_get_first_op(msg);
+    while (op != NULL)
+    {
+        op_num = coap_msg_op_get_num(op);
+        op_len = coap_msg_op_get_len(op);
+        op_val = coap_msg_op_get_val(op);
+        if (((op_num == COAP_MSG_BLOCK1) && (type == COAP_MSG_BLOCK1))
+         || ((op_num == COAP_MSG_BLOCK2) && (type == COAP_MSG_BLOCK2)))
+        {
+            return coap_msg_op_parse_block_val(num, more, size, op_val, op_len);
+        }
+        op = coap_msg_op_get_next(op);
+    }
+    return 1;  /* not found */
+}
+
 
 /*  return: { CON_RET_CLOSED,   socket closed remotely
  *          { CON_RET_TIMEDOUT, timeout

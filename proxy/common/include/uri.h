@@ -23,6 +23,24 @@
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * 
+ * 
+ * 
+ * Copyright (c) 2017 David Palma.
+ * All Rights Reserved.
+ * 
+ * This software is released free of charge as open source software with a GNU 
+ * General Public License.
+ * It is free software: you can redistribute it and/or modify it under the 
+ * terms of the GNU General Public License as published by the Free 
+ * Software Foundation, either version 3 of the License, or (at your option)
+ * any later version.
+ * 
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for 
+ * more details.
+ * 
  */
 
 /**
@@ -41,6 +59,7 @@
 #define uri_get_path(uri)      ((uri)->path)                                    /**< Get the path from a URI */
 #define uri_get_query(uri)     ((uri)->query)                                   /**< Get the query from a URI */
 #define uri_get_fragment(uri)  ((uri)->fragment)                                /**< Get the fragment from a URI */
+#define uri_get_scope(uri)     ((uri)->scope)                                   /**< Get the scope id from a URI */
 
 typedef struct
 {
@@ -51,6 +70,7 @@ typedef struct
     char *path;                                                                 /**< Path */
     char *query;                                                                /**< Query */
     char *fragment;                                                             /**< Fragment */
+    char *scope;                                                                /* scope id for link-local addr */
 }
 uri_t;
 
