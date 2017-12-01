@@ -339,7 +339,6 @@ static int server_handle_blockwise(coap_server_t *server, coap_msg_t *req, coap_
                     if ( uri_start - full_uri - uri_len == 0) {
                         //for string comparison
                         *uri_start = '\0';
-                        printf("first: %s\n", full_uri);
                         if ( strcmp(full_uri, "http:") == 0 || strcmp(full_uri, "https:") == 0 ) {
                             //Adding extra slash to cover http and https in address
                             *uri_start = '/';
